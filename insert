@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+use utf8;
+
+use DBIx::SimpleConnect;
+use Time::HiRes qw(time);
+
+my $dbh = DBIx::SimpleConnect->connect($ARGV[0],
+                                       { mysql_enable_utf8 => 1, });
+
+create_table($dbh);
+my $sth = $dbh->prepare("insert into dbbench_insert_$$(first_name, last_name, email) values(?, ?, ?)");
+my $t0 = time;
+my $n = 0;
+
+for my $first_name (
+    'Martin',  'Roger',  'Robert',   'Andrew', 'Russ',
+    'Eleanor', 'John',   'David',    'Paul',   'Rik',
+    'Stephen', 'Jürgen', 'Nicholas', 'Michel', 'Joe',
+    'Steve',   'Simon',  'Frossie',  'Michael', 'Holger',
+) {
+    for my $last_name (
+        'Hühn',     'Schneider', 'Neuper', 'Hermann',     'Hucklenbroich',
+        'Sponbiel', 'Richter',   'Faust',  'Bäuerle',     'Souvatzis',
+        'Einzel',   'Scholl',    'Steins', 'Reibenstein', 'Angenendt',
+        'Zilian',   'Pachta',    'Welzel', 'Ketelaer',    'Fuhrmann',
+    ) {
+        for my $domain (
+            'example.com', 'example.net', 'beispiel.at',
+        ) {
+            my $email = lc("$first_name.$last_name\@$domain");
+            $email =~ s/ä/ae/g;
+            $email =~ s/ü/ue/g;
+            $sth->execute($first_name, $last_name, $email);
+            $n++;
+        }
+    }
+}
+my $t1 = time;
+printf("%d inserts in %f seconds: %f inserts/second\n", $n, $t1 - $t0, $n / ($t1 - $t0));
+
+
+
+
+sub create_table {
+    my ($dbh) = @_;
+
+    my $drivername = $dbh->{Driver}->{Name};
+    $primary_key_type = {
+        'Pg' => 'serial primary key',
+        'mysql' => 'int not null auto_increment primary key',
+    }->{$drivername};
+
+    $dbh->do("drop table if exists dbbench_insert_$$");
+    $dbh->do("create table dbbench_insert_$$(
+                id $primary_key_type,
+                first_name varchar(80),
+                last_name varchar(80),
+                email varchar(80)
+              )");
+}
