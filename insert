@@ -1,43 +1,70 @@
 #!/usr/bin/perl
 
+use warnings;
+use strict;
 use utf8;
 
 use DBIx::SimpleConnect;
 use Time::HiRes qw(time);
 
-my $dbh = DBIx::SimpleConnect->connect($ARGV[0],
-                                       { mysql_enable_utf8 => 1, });
+insert_autocommit();
+insert_one_transaction();
 
-create_table($dbh);
-my $sth = $dbh->prepare("insert into dbbench_insert_$$(first_name, last_name, email) values(?, ?, ?)");
-my $t0 = time;
-my $n = 0;
+sub insert_autocommit {
+    my $dbh = DBIx::SimpleConnect->connect($ARGV[0],
+                                           { mysql_enable_utf8 => 1, });
 
-for my $first_name (
-    'Martin',  'Roger',  'Robert',   'Andrew', 'Russ',
-    'Eleanor', 'John',   'David',    'Paul',   'Rik',
-    'Stephen', 'Jürgen', 'Nicholas', 'Michel', 'Joe',
-    'Steve',   'Simon',  'Frossie',  'Michael', 'Holger',
-) {
-    for my $last_name (
-        'Hühn',     'Schneider', 'Neuper', 'Hermann',     'Hucklenbroich',
-        'Sponbiel', 'Richter',   'Faust',  'Bäuerle',     'Souvatzis',
-        'Einzel',   'Scholl',    'Steins', 'Reibenstein', 'Angenendt',
-        'Zilian',   'Pachta',    'Welzel', 'Ketelaer',    'Fuhrmann',
+    create_table($dbh);
+    my ($n, $dt) = insert_data($dbh);
+    printf("%s: %d inserts in %f seconds: %f inserts/second\n", (caller(0))[3], $n, $dt, $n / ($dt));
+    $dbh->disconnect();
+}
+
+sub insert_one_transaction {
+    my $dbh = DBIx::SimpleConnect->connect($ARGV[0],
+                                           { mysql_enable_utf8 => 1, AutoCommit => 0, });
+
+    create_table($dbh);
+    my ($n, $dt) = insert_data($dbh);
+    $dbh->commit();
+    printf("%s: %d inserts in %f seconds: %f inserts/second\n", (caller(0))[3], $n, $dt, $n / ($dt));
+    $dbh->disconnect();
+}
+
+sub insert_data {
+    my ($dbh) = @_;
+
+    my $t0 = time;
+    my $n = 0;
+
+    my $sth = $dbh->prepare("insert into dbbench_insert_$$(first_name, last_name, email) values(?, ?, ?)");
+
+    for my $first_name (
+        'Martin',  'Roger',  'Robert',   'Andrew', 'Russ',
+        'Eleanor', 'John',   'David',    'Paul',   'Rik',
+        'Stephen', 'Jürgen', 'Nicholas', 'Michel', 'Joe',
+        'Steve',   'Simon',  'Frossie',  'Michael', 'Holger',
     ) {
-        for my $domain (
-            'example.com', 'example.net', 'beispiel.at',
+        for my $last_name (
+            'Hühn',     'Schneider', 'Neuper', 'Hermann',     'Hucklenbroich',
+            'Sponbiel', 'Richter',   'Faust',  'Bäuerle',     'Souvatzis',
+            'Einzel',   'Scholl',    'Steins', 'Reibenstein', 'Angenendt',
+            'Zilian',   'Pachta',    'Welzel', 'Ketelaer',    'Fuhrmann',
         ) {
-            my $email = lc("$first_name.$last_name\@$domain");
-            $email =~ s/ä/ae/g;
-            $email =~ s/ü/ue/g;
-            $sth->execute($first_name, $last_name, $email);
-            $n++;
+            for my $domain (
+                'example.com', 'example.net', 'beispiel.at',
+            ) {
+                my $email = lc("$first_name.$last_name\@$domain");
+                $email =~ s/ä/ae/g;
+                $email =~ s/ü/ue/g;
+                $sth->execute($first_name, $last_name, $email);
+                $n++;
+            }
         }
     }
+    my $t1 = time;
+    return ($n, $t1 - $t0);
 }
-my $t1 = time;
-printf("%d inserts in %f seconds: %f inserts/second\n", $n, $t1 - $t0, $n / ($t1 - $t0));
 
 
 
@@ -46,7 +73,7 @@ sub create_table {
     my ($dbh) = @_;
 
     my $drivername = $dbh->{Driver}->{Name};
-    $primary_key_type = {
+    my $primary_key_type = {
         'Pg' => 'serial primary key',
         'mysql' => 'int not null auto_increment primary key',
     }->{$drivername};
