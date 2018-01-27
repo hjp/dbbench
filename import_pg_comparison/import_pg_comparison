@@ -1,0 +1,141 @@
+#!/usr/bin/python3
+
+"""
+Compare 3 ways of importing of a largish csv file into a pg table:
+1) Plain inserts
+2) Prepare/Execute
+3) Copy
+
+We perform each variant 5 times and report the median.
+"""
+
+import csv
+import os
+import psycopg2
+import sys
+import time
+
+db = psycopg2.connect("")
+csr = db.cursor()
+
+def create_table():
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        table_name = "import_pg_comparison_%s" % os.getpid()
+        q_drop = "drop table if exists " + table_name
+        csr.execute(q_drop);
+
+        q_create = (
+            "create table " + table_name + "(" +
+            ", ".join('"%s" varchar' % x for x in header) +
+            ")"
+        )
+        print(q_create)
+        csr.execute(q_create);
+    return table_name
+
+def import_plain():
+    table_name = create_table()
+
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        q_insert = (
+            "insert into " + table_name +
+            " values(" + ", ".join(["%s"] * len(header)) + ")"
+        )
+        print(q_insert)
+        db.commit()
+        t0 = time.monotonic()
+        for line in rdr:
+            csr.execute(q_insert, line)
+
+    db.commit()
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name
+    csr.execute(q_drop);
+    return r / dt
+
+def import_prepared():
+    table_name = create_table()
+
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        q_prepare = (
+            "prepare ins1 (" + ", ".join(["varchar"] * len(header)) + ") as " +
+            "insert into " + table_name +
+            " values(" + ", ".join("$%d" % (x + 1) for x in range(0, len(header))) + ")"
+        )
+        print(q_prepare)
+        csr.execute(q_prepare)
+
+        q_exec = (
+            "execute ins1(" + ", ".join(["%s"] * len(header)) + ")"
+        )
+        print(q_exec)
+
+        db.commit()
+        t0 = time.monotonic()
+        for line in rdr:
+            csr.execute(q_exec, line)
+
+    db.commit()
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name
+    csr.execute(q_drop);
+    csr.execute("deallocate ins1")
+    return r / dt
+
+def import_copy():
+    table_name = create_table()
+
+    db.commit()
+    t0 = time.monotonic()
+    # let's do this in a bit of a roundabout way: Recode the input file
+    # to use tab separators, then use copy on that (because psycopg2
+    # doesn't like quotes and in reality the input format often isn't
+    # quite what copy expects either).
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        with open("%s.tsv" % table_name, "w", encoding="utf-8") as wf:
+            for line in rdr:
+                print(*line, sep="\t", file=wf)
+    with open("%s.tsv" % table_name, encoding="utf-8") as f:
+        csr.copy_from(f, table_name)
+    db.commit()
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name
+    csr.execute(q_drop);
+    return r / dt
+
+
+perf = {}
+for i in range(5):
+    if "import_plain" not in perf:
+        perf["import_plain"] = []
+    perf["import_plain"].append(import_plain())
+    if "import_prepared" not in perf:
+        perf["import_prepared"] = []
+    perf["import_prepared"].append(import_prepared())
+    if "import_copy" not in perf:
+        perf["import_copy"] = []
+    perf["import_copy"].append(import_copy())
+
+for k in perf:
+    a = sorted(perf[k])
+    print(k, a)
