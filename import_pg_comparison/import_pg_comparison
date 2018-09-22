@@ -2,9 +2,9 @@
 
 """
 Compare 3 ways of importing of a largish csv file into a pg table:
-1) Plain inserts
+1) Plain inserts (with varying number of processes)
 2) Prepare/Execute
-3) Copy
+3) Copy (with varying number of processes)
 
 Additionally, "import" the data from a different table in the same
 database.
