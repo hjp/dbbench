@@ -1,0 +1,23 @@
+#!/usr/bin/perl
+use v5.24;
+use warnings;
+
+my @labels;
+while (<>) {
+    if (/(.*) \[(.*)\]/) {
+        my $label = $1; 
+        my $speeds = $2;
+        open my $fh, ">", $label;
+        for my $speed (split/, /, $speeds) {
+            say $fh $speed;
+        }
+        push @labels, $label;
+    }
+}
+
+say "set grid";
+say "set yrange [0:*]";
+say "set style data linespoints";
+say "set key below";
+
+say "plot ", join(", ", map qq{"$_"}, @labels);
