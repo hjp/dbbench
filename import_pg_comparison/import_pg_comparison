@@ -17,6 +17,7 @@ import os
 import psycopg2
 import sys
 import time
+import multiprocessing as mp
 
 db = psycopg2.connect("")
 csr = db.cursor()
@@ -164,8 +165,57 @@ def import_select():
     db.commit()
     return r / dt
 
+def import_plain_parallel_worker(i, n, file_name, table_name):
+    db = psycopg2.connect("")
+    csr = db.cursor()
+
+    with open(file_name, encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        q_insert = (
+            "insert into " + table_name +
+            " values(" + ", ".join(["%s"] * len(header)) + ")"
+        )
+        print(q_insert)
+        c = 0
+        for line in rdr:
+            if c % n == i:
+                csr.execute(q_insert, line)
+            c += 1
+
+    db.commit()
+
+def import_plain_parallel(n):
+    table_name = create_table()
+    db.commit()
+
+    t0 = time.monotonic()
+    kids = []
+    for i in range(n):
+        p = mp.Process(
+                target=import_plain_parallel_worker,
+                args=(i, n, sys.argv[1], table_name)
+               )
+        p.start()
+        kids.append(p)
+    for p in kids:
+        p.join()
+
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name
+    csr.execute(q_drop);
+    return r / dt
+
+
 
 tests = (
+    ("import_plain_parallel 2", lambda: import_plain_parallel(2)),
+    ("import_plain_parallel 4", lambda: import_plain_parallel(4)),
+    ("import_plain_parallel 8", lambda: import_plain_parallel(8)),
     ("import_plain", import_plain),
     ("import_prepared", import_prepared),
     ("import_copy", import_copy),
@@ -173,12 +223,13 @@ tests = (
 )
 
 perf = {}
-for i in range(5):
+n = 5
+for i in range(n):
     for t in tests:
         if t[0] not in perf:
             perf[t[0]] = []
         perf[t[0]].append(t[1]())
 
-for k in perf:
+for k in sorted(perf.keys(), key=lambda k: perf[k][(0 + n - 1) // 2]):
     a = sorted(perf[k])
     print(k, a)
