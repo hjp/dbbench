@@ -210,16 +210,61 @@ def import_plain_parallel(n):
     csr.execute(q_drop);
     return r / dt
 
+def import_copy_parallel_worker(i, n, file_name, table_name):
+    db = psycopg2.connect("")
+    csr = db.cursor()
+
+    with open(file_name, encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        with open("%s_%d.tsv" % (table_name, i), "w", encoding="utf-8") as wf:
+            c = 0
+            for line in rdr:
+                if c % n == i:
+                    print(*line, sep="\t", file=wf)
+                c += 1
+    with open("%s_%d.tsv" % (table_name, i), encoding="utf-8") as f:
+        csr.copy_from(f, table_name)
+    db.commit()
+
+def import_copy_parallel(n):
+    table_name = create_table()
+    db.commit()
+
+    t0 = time.monotonic()
+    kids = []
+    for i in range(n):
+        p = mp.Process(
+                target=import_copy_parallel_worker,
+                args=(i, n, sys.argv[1], table_name)
+               )
+        p.start()
+        kids.append(p)
+    for p in kids:
+        p.join()
+
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name
+    csr.execute(q_drop);
+    return r / dt
+
 
 
 tests = (
+    ("import_copy",             import_copy),
+    ("import_copy_parallel 2",  lambda: import_copy_parallel(2)),
+    ("import_copy_parallel 4",  lambda: import_copy_parallel(4)),
+    ("import_copy_parallel 8",  lambda: import_copy_parallel(8)),
+    ("import_plain",            import_plain),
     ("import_plain_parallel 2", lambda: import_plain_parallel(2)),
     ("import_plain_parallel 4", lambda: import_plain_parallel(4)),
     ("import_plain_parallel 8", lambda: import_plain_parallel(8)),
-    ("import_plain", import_plain),
-    ("import_prepared", import_prepared),
-    ("import_copy", import_copy),
-    ("import_select", import_select),
+    ("import_prepared",         import_prepared),
+    ("import_select",           import_select),
 )
 
 perf = {}
