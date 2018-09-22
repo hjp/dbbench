@@ -6,6 +6,9 @@ Compare 3 ways of importing of a largish csv file into a pg table:
 2) Prepare/Execute
 3) Copy
 
+Additionally, "import" the data from a different table in the same
+database.
+
 We perform each variant 5 times and report the median.
 """
 
@@ -22,7 +25,11 @@ def create_table():
     with open(sys.argv[1], encoding="utf-8-sig") as f:
         rdr = csv.reader(f,delimiter=",")
         header = next(rdr)
-        table_name = "import_pg_comparison_%s" % os.getpid()
+        try:
+            create_table.count += 1
+        except:
+            create_table.count = 1
+        table_name = "import_pg_comparison_%d_%d" % (os.getpid(), create_table.count)
         q_drop = "drop table if exists " + table_name
         csr.execute(q_drop);
 
@@ -123,18 +130,54 @@ def import_copy():
     csr.execute(q_drop);
     return r / dt
 
+def import_select():
+    """
+    "Import" data from another table in the database.
+    """
+    table_name_1 = create_table()
+    table_name_2 = create_table()
+
+    db.commit()
+    # Initialize table 1 with copy.
+    # This isn't part of the actual test.
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        with open("%s.tsv" % table_name_1, "w", encoding="utf-8") as wf:
+            for line in rdr:
+                print(*line, sep="\t", file=wf)
+    with open("%s.tsv" % table_name_1, encoding="utf-8") as f:
+        csr.copy_from(f, table_name_1)
+    db.commit()
+    t0 = time.monotonic()
+    csr.execute("insert into %s select * from %s" % (table_name_2, table_name_1))
+    db.commit()
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name_2)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name_1
+    csr.execute(q_drop);
+    q_drop = "drop table if exists " + table_name_2
+    csr.execute(q_drop);
+    db.commit()
+    return r / dt
+
+
+tests = (
+    ("import_plain", import_plain),
+    ("import_prepared", import_prepared),
+    ("import_copy", import_copy),
+    ("import_select", import_select),
+)
 
 perf = {}
 for i in range(5):
-    if "import_plain" not in perf:
-        perf["import_plain"] = []
-    perf["import_plain"].append(import_plain())
-    if "import_prepared" not in perf:
-        perf["import_prepared"] = []
-    perf["import_prepared"].append(import_prepared())
-    if "import_copy" not in perf:
-        perf["import_copy"] = []
-    perf["import_copy"].append(import_copy())
+    for t in tests:
+        if t[0] not in perf:
+            perf[t[0]] = []
+        perf[t[0]].append(t[1]())
 
 for k in perf:
     a = sorted(perf[k])
