@@ -1,0 +1,10 @@
+Ubuntu 20.04.6 LTS
+PostgreSQL 11.22 (Ubuntu 11.22-2.pgdg20.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 9.4.0-1ubuntu1~20.04.2) 9.4.0, 64-bit
+Python 3.8.10
+python3-psycopg2 2.8.6-2~pgdg20.04+1
+
+Intel(R) Xeon(R) Gold 6346 CPU @ 3.10GHz (HyperV guest)
+
+4GB RAM (HyperV guest)
+
+Virtual Disk (HyperV guest)
