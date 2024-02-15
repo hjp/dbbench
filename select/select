@@ -1,0 +1,42 @@
+#!/usr/bin/python3
+
+# Measure minimal query time.
+# First on an existing connection,
+# then including connection establishment and teardown
+
+import time
+import psycopg2
+
+n = 15
+
+db = psycopg2.connect()
+
+csr = db.cursor()
+
+times = []
+for i in range(n):
+    t0 = time.monotonic()
+    csr.execute("select current_timestamp")
+    r = csr.fetchone()
+    t1 = time.monotonic()
+    #print(i, r, t1 - t0)
+    times.append(t1 - t0)
+
+times = sorted(times)
+for i, t in enumerate(times):
+    print(f"select\t{i / (len(times) - 1):.3f}\t{t:.6f}")
+
+times = []
+for i in range(n):
+    t0 = time.monotonic()
+    with psycopg2.connect() as db:
+        with db.cursor() as csr:
+            csr.execute("select current_timestamp")
+            r = csr.fetchone()
+    t1 = time.monotonic()
+    #print(i, r, t1 - t0)
+    times.append(t1 - t0)
+
+times = sorted(times)
+for i, t in enumerate(times):
+    print(f"connect\t{i / (len(times) - 1):.3f}\t{t:.6f}")
