@@ -9,7 +9,7 @@ import psycopg2
 
 n = 15
 
-db = psycopg2.connect()
+db = psycopg2.connect("")
 
 csr = db.cursor()
 
@@ -29,7 +29,7 @@ for i, t in enumerate(times):
 times = []
 for i in range(n):
     t0 = time.monotonic()
-    with psycopg2.connect() as db:
+    with psycopg2.connect("") as db:
         with db.cursor() as csr:
             csr.execute("select current_timestamp")
             r = csr.fetchone()
