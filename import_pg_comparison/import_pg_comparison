@@ -14,13 +14,12 @@ We perform each variant 5 times and report the median.
 
 import csv
 import os
-import psycopg2
-import psycopg2.extras
+import psycopg
 import sys
 import time
 import multiprocessing as mp
 
-db = psycopg2.connect("")
+db = psycopg.connect("")
 csr = db.cursor()
 
 def create_table():
@@ -40,7 +39,7 @@ def create_table():
             ", ".join('"%s" varchar' % x for x in header) +
             ")"
         )
-        print(q_create)
+        # print(q_create)
         csr.execute(q_create);
     return table_name
 
@@ -54,7 +53,7 @@ def import_plain():
             "insert into " + table_name +
             " values(" + ", ".join(["%s"] * len(header)) + ")"
         )
-        print(q_insert)
+        # print(q_insert)
         db.commit()
         t0 = time.monotonic()
         for line in rdr:
@@ -70,86 +69,19 @@ def import_plain():
     csr.execute(q_drop);
     return r / dt
 
-def import_prepared():
-    table_name = create_table()
-
-    with open(sys.argv[1], encoding="utf-8-sig") as f:
-        rdr = csv.reader(f,delimiter=",")
-        header = next(rdr)
-        q_prepare = (
-            "prepare ins1 (" + ", ".join(["varchar"] * len(header)) + ") as " +
-            "insert into " + table_name +
-            " values(" + ", ".join("$%d" % (x + 1) for x in range(0, len(header))) + ")"
-        )
-        print(q_prepare)
-        csr.execute(q_prepare)
-
-        q_exec = (
-            "execute ins1(" + ", ".join(["%s"] * len(header)) + ")"
-        )
-        print(q_exec)
-
-        db.commit()
-        t0 = time.monotonic()
-        for line in rdr:
-            csr.execute(q_exec, line)
-
-    db.commit()
-    t1 = time.monotonic()
-    dt = t1 - t0
-    csr.execute("select count(*) from " + table_name)
-    r = csr.fetchone()[0]
-    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
-    q_drop = "drop table if exists " + table_name
-    csr.execute(q_drop);
-    csr.execute("deallocate ins1")
-    return r / dt
-
-def import_execute_batch():
-    table_name = create_table()
-
-    data = []
-    with open(sys.argv[1], encoding="utf-8-sig") as f:
-        rdr = csv.reader(f,delimiter=",")
-        header = next(rdr)
-        q_insert = (
-            "insert into " + table_name +
-            " values(" + ", ".join(["%s"] * len(header)) + ")"
-        )
-        print(q_insert)
-        db.commit()
-        t0 = time.monotonic()
-        for line in rdr:
-            data.append(line)
-
-    psycopg2.extras.execute_batch(csr, q_insert, data, page_size=10000)
-    db.commit()
-    t1 = time.monotonic()
-    dt = t1 - t0
-    csr.execute("select count(*) from " + table_name)
-    r = csr.fetchone()[0]
-    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
-    q_drop = "drop table if exists " + table_name
-    csr.execute(q_drop);
-    return r / dt
-
 def import_copy():
+    print("import_copy", end=": ", flush=True)
     table_name = create_table()
 
     db.commit()
     t0 = time.monotonic()
-    # let's do this in a bit of a roundabout way: Recode the input file
-    # to use tab separators, then use copy on that (because psycopg2
-    # doesn't like quotes and in reality the input format often isn't
-    # quite what copy expects either).
     with open(sys.argv[1], encoding="utf-8-sig") as f:
         rdr = csv.reader(f,delimiter=",")
         header = next(rdr)
-        with open("%s.tsv" % table_name, "w", encoding="utf-8") as wf:
+        q = "copy " + table_name + "(" + ", ".join('"%s"' % x for x in header) + ") from stdin"
+        with csr.copy(q) as copy:
             for line in rdr:
-                print(*line, sep="\t", file=wf)
-    with open("%s.tsv" % table_name, encoding="utf-8") as f:
-        csr.copy_from(f, table_name)
+                copy.write_row(line)
     db.commit()
     t1 = time.monotonic()
     dt = t1 - t0
@@ -173,12 +105,12 @@ def import_select():
     with open(sys.argv[1], encoding="utf-8-sig") as f:
         rdr = csv.reader(f,delimiter=",")
         header = next(rdr)
-        with open("%s.tsv" % table_name_1, "w", encoding="utf-8") as wf:
+        q = "copy " + table_name_1 + "(" + ", ".join('"%s"' % x for x in header) + ") from stdin"
+        with csr.copy(q) as copy:
             for line in rdr:
-                print(*line, sep="\t", file=wf)
-    with open("%s.tsv" % table_name_1, encoding="utf-8") as f:
-        csr.copy_from(f, table_name_1)
+                copy.write_row(line)
     db.commit()
+
     t0 = time.monotonic()
     csr.execute("insert into %s select * from %s" % (table_name_2, table_name_1))
     db.commit()
@@ -195,7 +127,7 @@ def import_select():
     return r / dt
 
 def import_plain_parallel_worker(i, n, file_name, table_name):
-    db = psycopg2.connect("")
+    db = psycopg.connect("")
     csr = db.cursor()
 
     with open(file_name, encoding="utf-8-sig") as f:
@@ -205,7 +137,7 @@ def import_plain_parallel_worker(i, n, file_name, table_name):
             "insert into " + table_name +
             " values(" + ", ".join(["%s"] * len(header)) + ")"
         )
-        print(q_insert)
+        #print(q_insert)
         c = 0
         for line in rdr:
             if c % n == i:
@@ -215,6 +147,7 @@ def import_plain_parallel_worker(i, n, file_name, table_name):
     db.commit()
 
 def import_plain_parallel(n):
+    print("import_plain_parallel", n, end=": ", flush=True)
     table_name = create_table()
     db.commit()
 
@@ -240,23 +173,23 @@ def import_plain_parallel(n):
     return r / dt
 
 def import_copy_parallel_worker(i, n, file_name, table_name):
-    db = psycopg2.connect("")
+    db = psycopg.connect("")
     csr = db.cursor()
 
     with open(file_name, encoding="utf-8-sig") as f:
         rdr = csv.reader(f,delimiter=",")
         header = next(rdr)
-        with open("%s_%d.tsv" % (table_name, i), "w", encoding="utf-8") as wf:
+        q = "copy " + table_name + "(" + ", ".join('"%s"' % x for x in header) + ") from stdin"
+        with csr.copy(q) as copy:
             c = 0
             for line in rdr:
                 if c % n == i:
-                    print(*line, sep="\t", file=wf)
+                    copy.write_row(line)
                 c += 1
-    with open("%s_%d.tsv" % (table_name, i), encoding="utf-8") as f:
-        csr.copy_from(f, table_name)
     db.commit()
 
 def import_copy_parallel(n):
+    print("import_copy_parallel", n, end=": ", flush=True)
     table_name = create_table()
     db.commit()
 
@@ -281,6 +214,66 @@ def import_copy_parallel(n):
     csr.execute(q_drop);
     return r / dt
 
+def import_executemany():
+    # Executemany is supposed to use pipeline mode implicitely, so it should be
+    # quite a bit faster than plain, but not as fast as copy
+    print("import_executemany", end=": ", flush=True)
+    table_name = create_table()
+
+    data = []
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        q_insert = (
+            "insert into " + table_name +
+            " values(" + ", ".join(["%s"] * len(header)) + ")"
+        )
+        #print(q_insert)
+        db.commit()
+        t0 = time.monotonic()
+        for line in rdr:
+            data.append(line)
+
+    csr.executemany(q_insert, data)
+    db.commit()
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name
+    csr.execute(q_drop);
+    return r / dt
+
+def import_pipeline():
+    # Explicitely use pipeline mode.
+    print("import_pipeline", end=": ", flush=True)
+    table_name = create_table()
+
+    with open(sys.argv[1], encoding="utf-8-sig") as f:
+        rdr = csv.reader(f,delimiter=",")
+        header = next(rdr)
+        q_insert = (
+            "insert into " + table_name +
+            " values(" + ", ".join(["%s"] * len(header)) + ")"
+        )
+        #print(q_insert)
+        db.commit()
+        t0 = time.monotonic()
+        with db.pipeline():
+            csr = db.cursor()
+            for line in rdr:
+                csr.execute(q_insert, line)
+
+    db.commit()
+    t1 = time.monotonic()
+    dt = t1 - t0
+    csr.execute("select count(*) from " + table_name)
+    r = csr.fetchone()[0]
+    print("imported %d rows in %f seconds (%f rows per second)" % (r, dt, r / dt))
+    q_drop = "drop table if exists " + table_name
+    csr.execute(q_drop);
+    return r / dt
 
 
 tests = (
@@ -288,18 +281,19 @@ tests = (
     ("import_copy_parallel 2",  lambda: import_copy_parallel(2)),
     ("import_copy_parallel 4",  lambda: import_copy_parallel(4)),
     ("import_copy_parallel 8",  lambda: import_copy_parallel(8)),
-    ("import_execute_batch",    import_execute_batch),
     ("import_plain",            import_plain),
     ("import_plain_parallel 2", lambda: import_plain_parallel(2)),
     ("import_plain_parallel 4", lambda: import_plain_parallel(4)),
     ("import_plain_parallel 8", lambda: import_plain_parallel(8)),
-    ("import_prepared",         import_prepared),
     ("import_select",           import_select),
+    ("import_executemany",      import_executemany),
+    ("import_pipeline",         import_pipeline),
 )
 
 perf = {}
 n = 5
 for i in range(n):
+    print(f"Round {i}")
     for t in tests:
         if t[0] not in perf:
             perf[t[0]] = []
